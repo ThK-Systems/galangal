@@ -1,13 +1,11 @@
 # galangal
 
-## Summary
-
 galangal is a modern sftp-client based on jsch. 
 
 
 ## Documentation
 
-Browse the **[Javadoc of the latest version](http://www.thk-systems.de/content/oss/javadoc/galangal/current/index.html)**. ('galangal' is well documented there.)
+Browse the [Javadoc of the latest version](http://www.thk-systems.de/content/oss/javadoc/galangal/current/index.html). ('galangal' is well documented there.)
 
 
 ## Installation
