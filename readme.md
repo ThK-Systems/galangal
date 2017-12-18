@@ -24,7 +24,7 @@ You can browse [maven-central](http://search.maven.org/#artifactdetails|net.thk-
 
 ## Changelog
 
-**1.1.0**
+**1.1.0 (unreleased)**
 
 * Updated dependencies
 
