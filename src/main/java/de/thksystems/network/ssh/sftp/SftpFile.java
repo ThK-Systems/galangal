@@ -1,7 +1,7 @@
 /*
  * tksCommons / galangal
- * 
- * Author : Thomas Kuhlmann (ThK-Systems, http://www.thk-systems.de) 
+ *
+ * Author : Thomas Kuhlmann (ThK-Systems, http://www.thk-systems.de)
  * License : LGPL (https://www.gnu.org/licenses/lgpl.html)
  */
 package de.thksystems.network.ssh.sftp;
@@ -17,92 +17,104 @@ import com.jcraft.jsch.SftpATTRS;
  */
 public class SftpFile {
 
-	public enum SftpFileType {
-		FILE, FOLDER, LINK, SPECIAL
-	}
+    private final String host;
+    private final String path;
+    private final String fileName;
+    private Long size;
+    private SftpFileType type;
 
-	private final String host;
+    SftpFile(String host, String remotePath, LsEntry lsEntry) {
+        super();
+        this.host = host;
+        this.path = remotePath;
+        this.fileName = lsEntry.getFilename();
+        readAttrs(lsEntry.getAttrs());
+    }
 
-	private final String path;
+    SftpFile(String host, String remotePath, String remoteFileName, SftpATTRS attrs) {
+        this.host = host;
+        this.path = remotePath;
+        this.fileName = remoteFileName;
+        readAttrs(attrs);
+    }
 
-	private final String fileName;
+    private void readAttrs(SftpATTRS attrs) {
+        this.size = attrs != null ? attrs.getSize() : null;
 
-	private Long size;
+        if (attrs.isDir()) {
+            type = SftpFileType.FOLDER;
+        } else if (attrs.isLink()) {
+            type = SftpFileType.LINK;
+        } else if (attrs.isReg()) {
+            type = SftpFileType.FILE;
+        } else {
+            type = SftpFileType.SPECIAL;
+        }
+    }
 
-	private SftpFileType type;
+    /**
+     * Gets host of file.
+     */
+    public String getHost() {
+        return host;
+    }
 
-	SftpFile(String host, String remotePath, LsEntry lsEntry) {
-		super();
-		this.host = host;
-		this.path = remotePath;
-		this.fileName = lsEntry.getFilename();
-		readAttrs(lsEntry.getAttrs());
-	}
+    /**
+     * Gets filename (without path).
+     */
+    public String getFileName() {
+        return fileName;
+    }
 
-	SftpFile(String host, String remotePath, String remoteFileName, SftpATTRS attrs) {
-		this.host = host;
-		this.path = remotePath;
-		this.fileName = remoteFileName;
-		readAttrs(attrs);
-	}
+    /**
+     * Gets path (without filename).
+     */
+    public String getPath() {
+        return path;
+    }
 
-	private void readAttrs(SftpATTRS attrs) {
-		this.size = attrs != null ? attrs.getSize() : null;
+    /**
+     * Gets path and filename.
+     */
+    public String getFullFileName() {
+        return path + SftpClient.SFTP_DIRECTORY_SEPARATOR + fileName;
+    }
 
-		if (attrs.isDir()) {
-			type = SftpFileType.FOLDER;
-		} else if (attrs.isLink()) {
-			type = SftpFileType.LINK;
-		} else if (attrs.isReg()) {
-			type = SftpFileType.FILE;
-		} else {
-			type = SftpFileType.SPECIAL;
-		}
-	}
+    /**
+     * Gets size.
+     */
+    public Long getSize() {
+        return size;
+    }
 
-	/** Gets host of file. */
-	public String getHost() {
-		return host;
-	}
+    /**
+     * Gets type.
+     */
+    public SftpFileType getType() {
+        return type;
+    }
 
-	/** Gets filename (without path). */
-	public String getFileName() {
-		return fileName;
-	}
+    /**
+     * Returns <code>true</code>, if it is a file.
+     */
+    public boolean isFile() {
+        return type == SftpFileType.FILE;
+    }
 
-	/** Gets path (without filename). */
-	public String getPath() {
-		return path;
-	}
+    /**
+     * Returns <code>true</code>, if it is a folder.
+     */
+    public boolean isFolder() {
+        return type == SftpFileType.FOLDER;
+    }
 
-	/** Gets path and filename. */
-	public String getFullFileName() {
-		return path + SftpClient.SFTP_DIRECTORY_SEPARATOR + fileName;
-	}
+    @Override
+    public String toString() {
+        return ToStringBuilder.reflectionToString(this, ToStringStyle.SHORT_PREFIX_STYLE);
+    }
 
-	/** Gets size. */
-	public Long getSize() {
-		return size;
-	}
-
-	/** Gets type. */
-	public SftpFileType getType() {
-		return type;
-	}
-
-	/** Returns <code>true</code>, if it is a file. */
-	public boolean isFile() {
-		return type == SftpFileType.FILE;
-	}
-
-	/** Returns <code>true</code>, if it is a folder. */
-	public boolean isFolder() {
-		return type == SftpFileType.FOLDER;
-	}
-
-	@Override
-	public String toString() {
-		return ToStringBuilder.reflectionToString(this, ToStringStyle.SHORT_PREFIX_STYLE);
-	}
+    public enum SftpFileType {
+        FILE, FOLDER, LINK, SPECIAL
+    }
 
 }

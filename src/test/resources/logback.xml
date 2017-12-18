@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
 
-	<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-		<encoder>
-			<pattern>%d{HH:mm:ss.SSS} [%-40thread] %-5level %logger{36} - %msg%n</pattern>
-		</encoder>
-	</appender>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%-40thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
 
-	<logger name="de.thksystems.network.ssh.sftp.JSchLogger" level="WARN" additivity="false">
-		<appender-ref ref="STDOUT" />
-	</logger>
+    <logger name="de.thksystems.network.ssh.sftp.JSchLogger" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
 
-	<root level="TRACE">
-		<appender-ref ref="STDOUT" />
-	</root>
+    <root level="TRACE">
+        <appender-ref ref="STDOUT"/>
+    </root>
 
 </configuration>
