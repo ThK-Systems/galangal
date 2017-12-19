@@ -41,13 +41,13 @@ public class SftpFile {
     private void readAttrs(SftpATTRS attrs) {
         this.size = attrs != null ? attrs.getSize() : null;
 
-        if (attrs.isDir()) {
+        if (attrs != null && attrs.isDir()) {
             type = SftpFileType.FOLDER;
-        } else if (attrs.isLink()) {
+        } else if (attrs != null && attrs.isLink()) {
             type = SftpFileType.LINK;
-        } else if (attrs.isReg()) {
+        } else if (attrs != null && attrs.isReg()) {
             type = SftpFileType.FILE;
-        } else {
+        } else if (attrs != null) {
             type = SftpFileType.SPECIAL;
         }
     }

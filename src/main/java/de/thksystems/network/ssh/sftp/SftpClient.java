@@ -6,6 +6,8 @@
  */
 package de.thksystems.network.ssh.sftp;
 
+import static de.thksystems.util.io.IOUtils.closeQuietly;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -28,7 +30,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.jcraft.jsch.ChannelSftp;
-import com.jcraft.jsch.ChannelSftp.LsEntry;
 import com.jcraft.jsch.ChannelSftp.LsEntrySelector;
 import com.jcraft.jsch.HostKey;
 import com.jcraft.jsch.JSch;
@@ -56,13 +57,7 @@ public final class SftpClient {
     private static final boolean DEFAULT_KEEPALIVE = false;
     private static final Long DEFAULT_KEEPALIVEINTERVALL = 5000L;
     private static final boolean DEFAULT_DISABLEHOSTKEYCHECK = false;
-    private final FileExistsCall FILEEXISTSCALL_LOCAL = new FileExistsCall() {
-
-        @Override
-        public boolean fileExists(String fileName) {
-            return new File(fileName).exists();
-        }
-    };
+    private final FileExistsCall FILEEXISTSCALL_LOCAL = fileName -> new File(fileName).exists();
     private final String host;
     private final int port;
     private final String user;
@@ -75,7 +70,7 @@ public final class SftpClient {
     private boolean transactional = DEFAULT_TRANSACTIONAL;
     private boolean createDirsAutomatically = DEFAULT_CREATEDIRSAUTOMATICALLY;
     private boolean keepAlive = DEFAULT_KEEPALIVE;
-    private long keepAliveIntervall = DEFAULT_KEEPALIVEINTERVALL;
+    private final FileExistsCall FILEEXISTSCALL_REMOTE = this::remoteFileExists;
     private long keepAliveLastSent = 0;
     private KeepAliveThread keepAliveThread;
     private boolean disableHostkeyCheck = DEFAULT_DISABLEHOSTKEYCHECK;
@@ -83,13 +78,7 @@ public final class SftpClient {
     private String hostKey;
     private HostKeyType hostKeyType;
     private ChannelSftp sftpChannel;
-    private final FileExistsCall FILEEXISTSCALL_REMOTE = new FileExistsCall() {
-
-        @Override
-        public boolean fileExists(String fileName) throws SftpClientException {
-            return remoteFileExists(fileName);
-        }
-    };
+    private long keepAliveInterval = DEFAULT_KEEPALIVEINTERVALL;
 
     /**
      * Create a sftp client (no connection is done while creating).
@@ -195,7 +184,7 @@ public final class SftpClient {
     }
 
     /**
-     * Sets the transactional flag. If set to <code>true</code>, all files will be transfered to a temporary filename and renamed after the transfer. Used for
+     * Sets the transactional flag. If set to <code>true</code>, all files will be transferred to a temporary filename and renamed after the transfer. Used for
      * upload and download. (Default is <code>true</code>.)
      */
     public synchronized SftpClient withTransactional(boolean transactional) {
@@ -249,7 +238,7 @@ public final class SftpClient {
     public synchronized SftpClient withNoKeepAlive() {
         checkForActiveConnectionWhileInitializing();
         this.keepAlive = false;
-        this.keepAliveIntervall = DEFAULT_KEEPALIVEINTERVALL;
+        this.keepAliveInterval = DEFAULT_KEEPALIVEINTERVALL;
         this.keepAliveLastSent = 0;
         return this;
     }
@@ -257,10 +246,10 @@ public final class SftpClient {
     /**
      * Enable keep alive. A packet is sent every n milliseconds to keep the connection alive. This is done in a separate thread.
      */
-    public synchronized SftpClient withActiveKeepAlive(long keepAliveIntervallMilliseconds) {
+    public synchronized SftpClient withActiveKeepAlive(long keepAliveIntervalMilliseconds) {
         checkForActiveConnectionWhileInitializing();
         this.keepAlive = true;
-        this.keepAliveIntervall = keepAliveIntervallMilliseconds;
+        this.keepAliveInterval = keepAliveIntervalMilliseconds;
         this.keepAliveLastSent = 0;
         return this;
     }
@@ -289,13 +278,13 @@ public final class SftpClient {
     /**
      * Sends a keep alive signal to the server.
      *
-     * @param forced If <code>true</code>, sent the signal, even if the time since the last keep alive signal is less than 'keepAliveIntervall'
+     * @param forced If <code>true</code>, sent the signal, even if the time since the last keep alive signal is less than 'keepAliveInterval'
      * @return <code>true</code>, if the server could reached, <code>false</code> in case of ANY exception.
      */
     protected boolean sendKeepAlive(boolean forced) {
         try {
             long currentTime = System.currentTimeMillis();
-            if (currentTime > (keepAliveLastSent + keepAliveIntervall) || forced) {
+            if (currentTime > (keepAliveLastSent + keepAliveInterval) || forced) {
                 LOG.debug("Sending keep alive");
                 sftpChannel.getSession().sendKeepAliveMsg();
                 keepAliveLastSent = currentTime;
@@ -469,24 +458,21 @@ public final class SftpClient {
      * Lists remote files at remote folder matching given wildcard (like '*.txt').
      *
      * @param remoteFolderName Name of the remote folder.
-     * @param givenwildcard    wildcard, e.g. '*.txt', '*', '*.*', 'myfile.txt'. Must not contain the directory separator '/'.
+     * @param givenWildcard    wildcard, e.g. '*.txt', '*', '*.*', 'myfile.txt'. Must not contain the directory separator '/'.
      * @return List of files (may be empty, but not null)
      */
-    public Collection<SftpFile> listRemoteFiles(final String remoteFolderName, final String givenwildcard) throws SftpClientException, FileNotFoundException {
-        LOG.debug("Listening remote files of '{}' with wildcard '{}'", remoteFolderName, givenwildcard);
+    public Collection<SftpFile> listRemoteFiles(final String remoteFolderName, final String givenWildcard) throws SftpClientException, FileNotFoundException {
+        LOG.debug("Listening remote files of '{}' with wildcard '{}'", remoteFolderName, givenWildcard);
         assertRemoteFolderExists(remoteFolderName);
-        final String validWildcard = assertValidWildcard(givenwildcard);
+        final String validWildcard = assertValidWildcard(givenWildcard);
         try {
             final ArrayList<SftpFile> files = new ArrayList<>();
-            LsEntrySelector selector = new LsEntrySelector() {
-                @Override
-                public int select(LsEntry entry) {
-                    if (FilenameUtils.wildcardMatch(entry.getFilename(), validWildcard)
-                            && !("..".equals(entry.getFilename()) || ".".equals(entry.getFilename()))) {
-                        files.add(new SftpFile(host, remoteFolderName, entry));
-                    }
-                    return LsEntrySelector.CONTINUE;
+            LsEntrySelector selector = entry -> {
+                if (FilenameUtils.wildcardMatch(entry.getFilename(), validWildcard)
+                        && !("..".equals(entry.getFilename()) || ".".equals(entry.getFilename()))) {
+                    files.add(new SftpFile(host, remoteFolderName, entry));
                 }
+                return LsEntrySelector.CONTINUE;
             };
             getConnection().ls(remoteFolderName, selector);
             return Collections.unmodifiableList(files);
@@ -599,7 +585,7 @@ public final class SftpClient {
      */
     public void createRemoteFolder(String remoteFolderName) throws SftpClientException {
         try {
-            Stack<String> hierarchicalFolderNames = new Stack<String>();
+            Stack<String> hierarchicalFolderNames = new Stack<>();
             String parentFolderName = remoteFolderName;
             while (!remoteFileExists(parentFolderName) && parentFolderName != null) {
                 hierarchicalFolderNames.push(parentFolderName);
@@ -678,7 +664,7 @@ public final class SftpClient {
         } catch (IOException e) {
             handleSftpException(e, "Upload failed: " + localFile);
         } finally {
-            IOUtils.closeQuietly(fis);
+            closeQuietly(fis);
         }
     }
 
@@ -712,7 +698,7 @@ public final class SftpClient {
             bais = new ByteArrayInputStream(data);
             uploadFileInternal(remoteFileName, bais);
         } finally {
-            IOUtils.closeQuietly(bais);
+            closeQuietly(bais);
         }
     }
 
@@ -724,7 +710,7 @@ public final class SftpClient {
      * Internal upload local stream -> remote file.
      */
     protected void uploadFileInternal(String remoteFileName, InputStream localInputStream)
-            throws SftpClientException, FileAlreadyExistsException, FileNotFoundException {
+            throws SftpClientException, FileNotFoundException {
         String temporaryFileName = null;
         assertRemoteFolderExists(getParentRemoteFolderName(remoteFileName), createDirsAutomatically);
         try {
@@ -779,7 +765,7 @@ public final class SftpClient {
             downloadFile(remoteFileName, baos);
             return baos.toByteArray();
         } finally {
-            IOUtils.closeQuietly(baos);
+            closeQuietly(baos);
         }
     }
 
@@ -832,7 +818,9 @@ public final class SftpClient {
                 getConnection().get(remoteFileName, temporaryFileName);
                 // While downloading the file another process may be written the same file, so it may now exists
                 localFileName = handlePossibleOverwrite(localFileName, FILEEXISTSCALL_LOCAL);
-                new File(temporaryFileName).renameTo(new File(localFileName));
+                if (!new File(temporaryFileName).renameTo(new File(localFileName))) {
+                    throw new SftpClientException("Renaming from temporary to intended filename failed");
+                }
             } else {
                 getConnection().get(remoteFileName, localFileName);
             }
@@ -844,7 +832,7 @@ public final class SftpClient {
     /**
      * Handles overwriting of file, if relevant.
      */
-    protected String handlePossibleOverwrite(String fileName, FileExistsCall feh) throws FileAlreadyExistsException, SftpClientException {
+    protected String handlePossibleOverwrite(String fileName, FileExistsCall feh) throws SftpClientException {
         if (feh.fileExists(fileName)) {
             switch (overwriteMode) {
                 case ALWAYS:
@@ -857,7 +845,7 @@ public final class SftpClient {
                     String fileNameBase = FilenameUtils.getFullPath(fileName) + FilenameUtils.getBaseName(fileName);
                     String fileNameSuffix = FilenameUtils.getExtension(fileName);
                     fileNameSuffix = StringUtils.isEmpty(fileNameSuffix) ? "" : "." + fileNameSuffix;
-                    String newFileName = null;
+                    String newFileName;
                     do {
                         String incrementingSuffix = "." + suffixCounter++;
                         if (overwriteMode == OverwriteMode.ADD_COUNTING_SUFFIX_AFTER_EXISTING_SUFFIX) {
@@ -896,7 +884,7 @@ public final class SftpClient {
     }
 
     /**
-     * In strict mode, check for remote folder. Create it, if createDir is <code>true</code> (independet from strict mode)
+     * In strict mode, check for remote folder. Create it, if createDir is <code>true</code> (independent from strict mode)
      */
     protected void assertRemoteFolderExists(String remoteFolderName, boolean createDir) throws SftpClientException, FileNotFoundException {
         if (createDir || strictMode) {
@@ -951,13 +939,15 @@ public final class SftpClient {
     }
 
     /**
-     * In strict mode, check for local folder. Create it, if createDir is <code>true</code> (independet from strict mode)
+     * In strict mode, check for local folder. Create it, if createDir is <code>true</code> (independent from strict mode)
      */
-    protected void assertLocalFolderExists(File localFolder, boolean createDirs) throws FileNotFoundException {
+    protected void assertLocalFolderExists(File localFolder, boolean createDirs) throws FileNotFoundException, SftpClientException {
         if (strictMode || createDirs) {
             if (!localFolder.isDirectory()) {
                 if (createDirs) {
-                    localFolder.mkdirs();
+                    if (!localFolder.mkdirs()) {
+                        throw new SftpClientException("Create dirs failed: " + localFolder);
+                    }
                 }
             }
         }
@@ -1021,7 +1011,7 @@ public final class SftpClient {
             setName(String.format("sftp-keepalive (%s@%s:%d)", user, host, port));
             while (runIt) {
                 try {
-                    Thread.sleep(keepAliveIntervall + 1);
+                    Thread.sleep(keepAliveInterval + 1);
                     if (!sendKeepAlive()) {
                         LOG.warn("Connection lost. Stopping keep alive thread.");
                         stopThread();
