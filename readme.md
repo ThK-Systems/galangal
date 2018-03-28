@@ -17,7 +17,7 @@ Browse the [Javadoc of the latest version](http://www.thk-systems.de/content/oss
   <version>1.1.0</version>
 </dependency>
 ```
-You can browse [maven-central](http://search.maven.org/#artifactdetails|net.thk-systems.network|galangal|1.0.2|jar) to download the jar or another versions.
+You can browse [maven-central](http://search.maven.org/#artifactdetails|net.thk-systems.network|galangal|1.1.0|jar) to download the jar or another versions.
 
 
 ## Changelog
