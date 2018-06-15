@@ -46,39 +46,128 @@ import de.thksystems.util.text.RandomStringUtils;
  */
 public final class SftpClient {
 
-    public static final int DEFAULT_PORT = 22;
-    public static final int DEFAULT_TIMEOUT = 30 * 1000;
     protected static final String SFTP_DIRECTORY_SEPARATOR = "/";
     private static final Logger LOG = LoggerFactory.getLogger(SftpClient.class);
+    public static final int DEFAULT_PORT = 22;
+    public static final int DEFAULT_TIMEOUT = 30 * 1000;
+    private final FileExistsCall FILEEXISTSCALL_LOCAL = fileName -> new File(fileName).exists();
+    private final FileExistsCall FILEEXISTSCALL_REMOTE = this::remoteFileExists;
+    private long keepAliveInterval = DEFAULT_KEEPALIVEINTERVALL;
+
+    /**
+     * Stats remote file.
+     *
+     * @param remoteFileName Name of the remote file
+     * @return SftpFile or <code>null</code>, if the file does not exists.
+     */
+    public SftpFile statRemoteFile(String remoteFileName) throws SftpClientException {
+        try {
+            if (remoteFileExists(remoteFileName)) {
+                SftpATTRS attrs = getConnection().stat(remoteFileName);
+                return new SftpFile(host, getParentRemoteFolderName(remoteFileName), FilenameUtils.getName(remoteFileName), attrs);
+            } else {
+                return null;
+            }
+        } catch (SftpException e) {
+            return handleSftpException(e, "Stat failed: '" + remoteFileName + "'");
+        }
+    }
+
+    /**
+     * Deletes the remote file.
+     */
+    public void deleteRemoteFile(String remoteFileName) throws SftpClientException, FileNotFoundException {
+        assertRemoteFileExists(remoteFileName);
+        try {
+            LOG.debug("Deleting remote file: '{}'", remoteFileName);
+            getConnection().rm(remoteFileName);
+        } catch (SftpException e) {
+            handleSftpException(e, "Delete failed: '" + remoteFileName + "'");
+        }
+    }
+
+    /**
+     * Deletes the remote folder recursively including any content and any sub folders!!!!
+     *
+     * @param remoteFolderName Name of the remote folder to create.
+     */
+    public void deleteRemoteFolder(String remoteFolderName) throws SftpClientException, FileNotFoundException {
+        assertRemoteFolderExists(remoteFolderName);
+        try {
+            Collection<SftpFile> listRemoteFiles = listRemoteFiles(remoteFolderName);
+            for (SftpFile remoteFile : listRemoteFiles) {
+                switch (remoteFile.getType()) {
+                    case FOLDER:
+                        LOG.debug("Deleting remote folder: '{}'", remoteFolderName);
+                        deleteRemoteFolder(remoteFile.getFullFileName());
+                        break;
+                    default:
+                        deleteRemoteFile(remoteFile.getFullFileName());
+                }
+            }
+            getConnection().rmdir(remoteFolderName);
+        } catch (SftpException e) {
+            handleSftpException(e, "Delete failed: '" + remoteFolderName + "'");
+        }
+    }
+
     private static final boolean DEFAULT_STRICTMODE = true;
     private static final OverwriteMode DEFAULT_OVERWRITEMODE = OverwriteMode.NEVER;
     private static final boolean DEFAULT_TRANSACTIONAL = true;
     private static final boolean DEFAULT_CREATEDIRSAUTOMATICALLY = false;
+
     private static final boolean DEFAULT_KEEPALIVE = false;
     private static final Long DEFAULT_KEEPALIVEINTERVALL = 5000L;
     private static final boolean DEFAULT_DISABLEHOSTKEYCHECK = false;
-    private final FileExistsCall FILEEXISTSCALL_LOCAL = fileName -> new File(fileName).exists();
+
     private final String host;
     private final int port;
+
     private final String user;
     private final String password;
     private final File privateKeyFile;
     private final String privateKeyPassphrase;
+
     private int timeout = DEFAULT_TIMEOUT;
+
     private boolean strictMode = DEFAULT_STRICTMODE;
     private OverwriteMode overwriteMode = DEFAULT_OVERWRITEMODE;
     private boolean transactional = DEFAULT_TRANSACTIONAL;
     private boolean createDirsAutomatically = DEFAULT_CREATEDIRSAUTOMATICALLY;
+
     private boolean keepAlive = DEFAULT_KEEPALIVE;
-    private final FileExistsCall FILEEXISTSCALL_REMOTE = this::remoteFileExists;
+
+    /**
+     * Creates remote folder (recursively).
+     *
+     * @param remoteFolderName Name of the remote folder to create.
+     */
+    public void createRemoteFolder(String remoteFolderName) throws SftpClientException {
+        try {
+            Stack<String> hierarchicalFolderNames = new Stack<>();
+            String parentFolderName = remoteFolderName;
+            while (!remoteFileExists(parentFolderName) && parentFolderName != null) {
+                hierarchicalFolderNames.push(parentFolderName);
+                parentFolderName = getParentRemoteFolderName(parentFolderName);
+            }
+            while (!hierarchicalFolderNames.isEmpty()) {
+                String remoteFolderNamePart = hierarchicalFolderNames.pop();
+                LOG.debug("Creating remote folder: '{}'", remoteFolderNamePart);
+                getConnection().mkdir(remoteFolderNamePart);
+            }
+        } catch (SftpException e) {
+            handleSftpException(e, "Creating remote folder failed: '" + remoteFolderName + "'");
+        }
+    }
     private long keepAliveLastSent = 0;
     private KeepAliveThread keepAliveThread;
+
     private boolean disableHostkeyCheck = DEFAULT_DISABLEHOSTKEYCHECK;
     private File knownHostsFile;
     private String hostKey;
     private HostKeyType hostKeyType;
+
     private ChannelSftp sftpChannel;
-    private long keepAliveInterval = DEFAULT_KEEPALIVEINTERVALL;
 
     /**
      * Create a sftp client (no connection is done while creating).
@@ -426,21 +515,15 @@ public final class SftpClient {
     }
 
     /**
-     * Stats remote file.
-     *
-     * @param remoteFileName Name of the remote file
-     * @return SftpFile or <code>null</code>, if the file does not exists.
+     * Returns <code>true</code>, if the remote file already exists.
      */
-    public SftpFile statRemoteFile(String remoteFileName) throws SftpClientException {
+    protected boolean remoteFileExists(String remoteFileName) throws SftpClientException {
+        LOG.debug("Check if remote file exists: '{}'", remoteFileName);
         try {
-            if (remoteFileExists(remoteFileName)) {
-                SftpATTRS attrs = getConnection().stat(remoteFileName);
-                return new SftpFile(host, getParentRemoteFolderName(remoteFileName), FilenameUtils.getName(remoteFileName), attrs);
-            } else {
-                return null;
-            }
+            return getConnection().stat(remoteFileName) != null;
         } catch (SftpException e) {
-            return handleSftpException(e, "Stat failed: " + remoteFileName);
+            LOG.error("Error while stat of remote file: {}", e.getMessage(), e);
+            return false;
         }
     }
 
@@ -541,63 +624,76 @@ public final class SftpClient {
     }
 
     /**
-     * Deletes the remote file.
+     * Upload file to sftp server.
+     *
+     * @param remoteFileName Remote file name.
+     * @param localFile      Local file.
+     * @throws SftpClientException        In case of any sftp exception
+     * @throws FileAlreadyExistsException If the remote file already exists and overwriting is disabled.
      */
-    public void deleteRemoteFile(String remoteFileName) throws SftpClientException, FileNotFoundException {
-        assertRemoteFileExists(remoteFileName);
+    public void uploadFile(String remoteFileName, File localFile) throws SftpClientException, FileNotFoundException {
+        assertLocalFileExists(localFile);
+        FileInputStream fis = null;
         try {
-            LOG.debug("Deleting remote file: {}", remoteFileName);
-            getConnection().rm(remoteFileName);
-        } catch (SftpException e) {
-            handleSftpException(e, "Delete failed: " + remoteFileName);
+            LOG.info("Uploading file '{}' to '{}'", localFile, remoteFileName);
+            if (localFile.isFile()) {
+                fis = new FileInputStream(localFile);
+                uploadFileInternal(remoteFileName, fis);
+            } else {
+                throw new SftpClientException(localFile + " is not a valid local file. (may be a folder?)");
+            }
+        } catch (IOException e) {
+            handleSftpException(e, "Upload failed: '" + localFile + "'");
+        } finally {
+            closeQuietly(fis);
         }
     }
 
     /**
-     * Deletes the remote folder recursively including any content and any sub folders!!!!
+     * Upload data to sftp server.
      *
-     * @param remoteFolderName Name of the remote folder to create.
+     * <b>Use this method only for a small amount of data!!!</b>
+     *
+     * @param remoteFileName Remote file name.
+     * @param data           Byte array to upload
+     * @throws SftpClientException        In case of any sftp exception
+     * @throws FileAlreadyExistsException If the remote file already exists and overwriting is disabled.
      */
-    public void deleteRemoteFolder(String remoteFolderName) throws SftpClientException, FileNotFoundException {
-        assertRemoteFolderExists(remoteFolderName);
+    public void uploadData(String remoteFileName, byte[] data) throws SftpClientException, FileNotFoundException {
+        ByteArrayInputStream bais = null;
         try {
-            Collection<SftpFile> listRemoteFiles = listRemoteFiles(remoteFolderName);
-            for (SftpFile remoteFile : listRemoteFiles) {
-                switch (remoteFile.getType()) {
-                    case FOLDER:
-                        LOG.debug("Deleting remote folder: {}", remoteFolderName);
-                        deleteRemoteFolder(remoteFile.getFullFileName());
-                        break;
-                    default:
-                        deleteRemoteFile(remoteFile.getFullFileName());
-                }
-            }
-            getConnection().rmdir(remoteFolderName);
-        } catch (SftpException e) {
-            handleSftpException(e, "Delete failed: " + remoteFolderName);
+            LOG.info("Uploading data to '{}'", remoteFileName);
+            bais = new ByteArrayInputStream(data);
+            uploadFileInternal(remoteFileName, bais);
+        } finally {
+            closeQuietly(bais);
         }
     }
 
     /**
-     * Creates remote folder (recursively).
-     *
-     * @param remoteFolderName Name of the remote folder to create.
+     * Internal upload local stream -> remote file.
      */
-    public void createRemoteFolder(String remoteFolderName) throws SftpClientException {
+    protected void uploadFileInternal(String remoteFileName, InputStream localInputStream)
+            throws SftpClientException, FileNotFoundException {
+        String temporaryFileName = null;
+        assertRemoteFolderExists(getParentRemoteFolderName(remoteFileName), createDirsAutomatically);
         try {
-            Stack<String> hierarchicalFolderNames = new Stack<>();
-            String parentFolderName = remoteFolderName;
-            while (!remoteFileExists(parentFolderName) && parentFolderName != null) {
-                hierarchicalFolderNames.push(parentFolderName);
-                parentFolderName = getParentRemoteFolderName(parentFolderName);
-            }
-            while (!hierarchicalFolderNames.isEmpty()) {
-                String remoteFolderNamePart = hierarchicalFolderNames.pop();
-                LOG.debug("Creating remote folder: {}", remoteFolderNamePart);
-                getConnection().mkdir(remoteFolderNamePart);
+            remoteFileName = handlePossibleOverwrite(remoteFileName, FILEEXISTSCALL_REMOTE);
+            if (transactional) {
+                temporaryFileName = FilenameUtils.getFullPath(remoteFileName) + "." + RandomStringUtils.randomAlphanumeric(25);
+                LOG.debug("Uploading to temporary file: '{}'", temporaryFileName);
+                getConnection().put(localInputStream, temporaryFileName);
+                // While uploading the file another process may be written the same file, so it may now exists
+                remoteFileName = handlePossibleOverwrite(remoteFileName, FILEEXISTSCALL_REMOTE);
+                renameRemoteFile(temporaryFileName, remoteFileName);
+            } else {
+                getConnection().put(localInputStream, remoteFileName);
             }
         } catch (SftpException e) {
-            handleSftpException(e, "Creating remote folder failed: " + remoteFolderName);
+            if (temporaryFileName != null) {
+                deleteRemoteFile(temporaryFileName);
+            }
+            handleSftpException(e, "Upload failed");
         }
     }
 
@@ -613,13 +709,18 @@ public final class SftpClient {
     }
 
     /**
-     * Returns <code>true</code>, if the remote file already exists.
+     * Downloads remote file to output stream.
+     *
+     * @param remoteFileName    Name of the remote file.
+     * @param localOutputStream Local output stream.
      */
-    protected boolean remoteFileExists(String remoteFileName) throws SftpClientException {
+    public void downloadFile(String remoteFileName, OutputStream localOutputStream) throws SftpClientException, FileNotFoundException {
         try {
-            return getConnection().stat(remoteFileName) != null;
+            LOG.info("Downloading remote file '{}' to local stream '{}'", remoteFileName, localOutputStream);
+            assertRemoteFileExists(remoteFileName);
+            getConnection().get(remoteFileName, localOutputStream);
         } catch (SftpException e) {
-            return false;
+            handleSftpException(e, "Download failed: '" + remoteFileName + "'");
         }
     }
 
@@ -643,115 +744,8 @@ public final class SftpClient {
     }
 
     /**
-     * Upload file to sftp server.
-     *
-     * @param remoteFileName Remote file name.
-     * @param localFile      Local file.
-     * @throws SftpClientException        In case of any sftp exception
-     * @throws FileAlreadyExistsException If the remote file already exists and overwriting is disabled.
-     */
-    public void uploadFile(String remoteFileName, File localFile) throws SftpClientException, FileNotFoundException {
-        assertLocalFileExists(localFile);
-        FileInputStream fis = null;
-        try {
-            LOG.info("Uploading file '{}' to '{}'", localFile, remoteFileName);
-            if (localFile.isFile()) {
-                fis = new FileInputStream(localFile);
-                uploadFileInternal(remoteFileName, fis);
-            } else {
-                throw new SftpClientException(localFile + " is not a valid local file. (may be a folder?)");
-            }
-        } catch (IOException e) {
-            handleSftpException(e, "Upload failed: " + localFile);
-        } finally {
-            closeQuietly(fis);
-        }
-    }
-
-    /**
-     * Upload data of input stream to sftp server.
-     *
-     * @param remoteFileName   Remote file name.
-     * @param localInputStream Input stream uploaded to
-     * @throws SftpClientException        In case of any sftp exception
-     * @throws FileAlreadyExistsException If the remote file already exists and overwriting is disabled.
-     */
-    public void uploadFile(String remoteFileName, InputStream localInputStream) throws SftpClientException, FileNotFoundException {
-        LOG.info("Uploading input stream '{}' to '{}'", localInputStream.toString(), remoteFileName);
-        uploadFileInternal(remoteFileName, localInputStream);
-    }
-
-    /**
-     * Upload data to sftp server.
-     * <p>
-     * <b>Use this method only for a small amount of data!!!</b>
-     *
-     * @param remoteFileName Remote file name.
-     * @param data           Byte array to upload
-     * @throws SftpClientException        In case of any sftp exception
-     * @throws FileAlreadyExistsException If the remote file already exists and overwriting is disabled.
-     */
-    public void uploadData(String remoteFileName, byte[] data) throws SftpClientException, FileNotFoundException {
-        ByteArrayInputStream bais = null;
-        try {
-            LOG.info("Uploading data to '{}'", remoteFileName);
-            bais = new ByteArrayInputStream(data);
-            uploadFileInternal(remoteFileName, bais);
-        } finally {
-            closeQuietly(bais);
-        }
-    }
-
-    // ===================================================================================
-    // ========================== UPLOAD / DOWNLOAD ======================================
-    // ===================================================================================
-
-    /**
-     * Internal upload local stream -> remote file.
-     */
-    protected void uploadFileInternal(String remoteFileName, InputStream localInputStream)
-            throws SftpClientException, FileNotFoundException {
-        String temporaryFileName = null;
-        assertRemoteFolderExists(getParentRemoteFolderName(remoteFileName), createDirsAutomatically);
-        try {
-            remoteFileName = handlePossibleOverwrite(remoteFileName, FILEEXISTSCALL_REMOTE);
-            if (transactional) {
-                temporaryFileName = FilenameUtils.getFullPath(remoteFileName) + "." + RandomStringUtils.randomAlphanumeric(25);
-                LOG.debug("Uploading to temporary file: {}", temporaryFileName);
-                getConnection().put(localInputStream, temporaryFileName);
-                // While uploading the file another process may be written the same file, so it may now exists
-                remoteFileName = handlePossibleOverwrite(remoteFileName, FILEEXISTSCALL_REMOTE);
-                renameRemoteFile(temporaryFileName, remoteFileName);
-            } else {
-                getConnection().put(localInputStream, remoteFileName);
-            }
-        } catch (SftpException e) {
-            if (temporaryFileName != null) {
-                deleteRemoteFile(temporaryFileName);
-            }
-            handleSftpException(e, "Upload failed");
-        }
-    }
-
-    /**
-     * Downloads remote file to output stream.
-     *
-     * @param remoteFileName    Name of the remote file.
-     * @param localOutputStream Local output stream.
-     */
-    public void downloadFile(String remoteFileName, OutputStream localOutputStream) throws SftpClientException, FileNotFoundException {
-        try {
-            LOG.info("Downloading remote file '{}' to local stream '{}'", remoteFileName, localOutputStream);
-            assertRemoteFileExists(remoteFileName);
-            getConnection().get(remoteFileName, localOutputStream);
-        } catch (SftpException e) {
-            handleSftpException(e, "Download failed: " + remoteFileName);
-        }
-    }
-
-    /**
      * Downloads remote file to byte array.
-     * <p>
+     *
      * <b>Use this method only for small files!!!</b>
      *
      * @param remoteFileName Name of the remote file.
@@ -770,13 +764,16 @@ public final class SftpClient {
     }
 
     /**
-     * Downloads all files (and only files) of the given remote folder (non-recursive) to the given local folder.
+     * Upload data of input stream to sftp server.
      *
-     * @param remoteFolderName Name of the remote folder
-     * @param localFolderName  Name of the local folder.
+     * @param remoteFileName   Remote file name.
+     * @param localInputStream Input stream uploaded to
+     * @throws SftpClientException        In case of any sftp exception
+     * @throws FileAlreadyExistsException If the remote file already exists and overwriting is disabled.
      */
-    public void downloadFiles(String remoteFolderName, String localFolderName) throws SftpClientException, FileNotFoundException {
-        downloadFiles(remoteFolderName, localFolderName, "*");
+    public void uploadFile(String remoteFileName, InputStream localInputStream) throws SftpClientException, FileNotFoundException {
+        LOG.info("Uploading input stream '{}' to '{}'", localInputStream.toString(), remoteFileName);
+        uploadFileInternal(remoteFileName, localInputStream);
     }
 
     /**
@@ -800,34 +797,13 @@ public final class SftpClient {
                 }
             }
         } catch (SftpException e) {
-            handleSftpException(e, "Download failed: " + remoteFolderName);
+            handleSftpException(e, "Download failed: '" + remoteFolderName + "'");
         }
     }
 
-    /**
-     * Download remote file -> local file.
-     */
-    protected void downloadFileInternal(String remoteFileName, String localFileName) throws SftpException, SftpClientException, FileNotFoundException {
-        LOG.debug("Downloading file '{}' to '{}'", remoteFileName, localFileName);
-        assertLocalFolderExists(new File(localFileName).getParentFile(), createDirsAutomatically);
-        String temporaryFileName = null;
-        try {
-            localFileName = handlePossibleOverwrite(localFileName, FILEEXISTSCALL_LOCAL);
-            if (transactional) {
-                temporaryFileName = FilenameUtils.getFullPath(localFileName) + "." + RandomStringUtils.randomAlphanumeric(25);
-                getConnection().get(remoteFileName, temporaryFileName);
-                // While downloading the file another process may be written the same file, so it may now exists
-                localFileName = handlePossibleOverwrite(localFileName, FILEEXISTSCALL_LOCAL);
-                if (!new File(temporaryFileName).renameTo(new File(localFileName))) {
-                    throw new SftpClientException("Renaming from temporary to intended filename failed");
-                }
-            } else {
-                getConnection().get(remoteFileName, localFileName);
-            }
-        } finally {
-            FileUtils.deleteQuietly(temporaryFileName != null ? new File(temporaryFileName) : null);
-        }
-    }
+    // ===================================================================================
+    // ========================== UPLOAD / DOWNLOAD ======================================
+    // ===================================================================================
 
     /**
      * Handles overwriting of file, if relevant.
@@ -838,7 +814,7 @@ public final class SftpClient {
                 case ALWAYS:
                     return fileName;
                 case NEVER:
-                    throw new FileAlreadyExistsException("File already exists: " + fileName);
+                    throw new FileAlreadyExistsException("File already exists: '" + fileName + "'");
                 case ADD_COUNTING_SUFFIX_AFTER_EXISTING_SUFFIX:
                 case ADD_COUNTING_SUFFIX_BEFORE_EXISTING_SUFFIX:
                     int suffixCounter = 1;
@@ -869,17 +845,8 @@ public final class SftpClient {
         if (strictMode) {
             SftpFile remoteFile = statRemoteFile(remoteFileName);
             if (remoteFile == null || remoteFile.getType() != SftpFileType.FILE) {
-                throw new FileNotFoundException("Remote file not found or not a valid file: " + remoteFileName);
+                throw new FileNotFoundException("Remote file not found or not a valid file: '" + remoteFileName + "'");
             }
-        }
-    }
-
-    /**
-     * In strict mode, check for remote folder.
-     */
-    protected void assertRemoteFolderExists(String remoteFolderName) throws SftpClientException, FileNotFoundException {
-        if (strictMode) {
-            assertRemoteFolderExists(remoteFolderName, false);
         }
     }
 
@@ -893,9 +860,19 @@ public final class SftpClient {
                 createRemoteFolder(remoteFolderName);
             }
             if (strictMode && remoteFolder != null && remoteFolder.getType() != SftpFileType.FOLDER) {
-                throw new FileNotFoundException("Remote folder not found or not a valid folder: " + remoteFolderName);
+                throw new FileNotFoundException("Remote folder not found or not a valid folder: '" + remoteFolderName + "'");
             }
         }
+    }
+
+    /**
+     * Downloads all files (and only files) of the given remote folder (non-recursive) to the given local folder.
+     *
+     * @param remoteFolderName Name of the remote folder
+     * @param localFolderName  Name of the local folder.
+     */
+    public void downloadFiles(String remoteFolderName, String localFolderName) throws SftpClientException, FileNotFoundException {
+        downloadFiles(remoteFolderName, localFolderName, "*");
     }
 
     /**
@@ -909,23 +886,33 @@ public final class SftpClient {
             validWildcard = givenWildcard;
         }
         if (validWildcard.contains(SFTP_DIRECTORY_SEPARATOR)) {
-            throw new SftpClientException("Invalid wildcard: " + validWildcard);
+            throw new SftpClientException("Invalid wildcard: '" + validWildcard + "'");
         }
         return validWildcard;
     }
 
-    // ===================================================================================
-    // ============================== ASSERTS ============================================
-    // ===================================================================================
-
     /**
-     * In strict mode, check for local files.
+     * Download remote file -> local file.
      */
-    protected void assertLocalFilesExists(File... localFiles) throws FileNotFoundException {
-        if (strictMode) {
-            for (File localFile : localFiles) {
-                assertLocalFileExists(localFile);
+    protected void downloadFileInternal(String remoteFileName, String localFileName) throws SftpException, SftpClientException, FileNotFoundException {
+        LOG.debug("Downloading file '{}' to '{}'", remoteFileName, localFileName);
+        assertLocalFolderExists(new File(localFileName).getParentFile(), createDirsAutomatically);
+        String temporaryFileName = null;
+        try {
+            localFileName = handlePossibleOverwrite(localFileName, FILEEXISTSCALL_LOCAL);
+            if (transactional) {
+                temporaryFileName = FilenameUtils.getFullPath(localFileName) + "." + RandomStringUtils.randomAlphanumeric(25);
+                getConnection().get(remoteFileName, temporaryFileName);
+                // While downloading the file another process may be written the same file, so it may now exists
+                localFileName = handlePossibleOverwrite(localFileName, FILEEXISTSCALL_LOCAL);
+                if (!new File(temporaryFileName).renameTo(new File(localFileName))) {
+                    throw new SftpClientException("Renaming from temporary to intended filename failed");
+                }
+            } else {
+                getConnection().get(remoteFileName, localFileName);
             }
+        } finally {
+            FileUtils.deleteQuietly(temporaryFileName != null ? new File(temporaryFileName) : null);
         }
     }
 
@@ -934,7 +921,7 @@ public final class SftpClient {
      */
     protected void assertLocalFileExists(File localFile) throws FileNotFoundException {
         if (strictMode && !localFile.canRead()) {
-            throw new FileNotFoundException("Cannot read local file: " + localFile);
+            throw new FileNotFoundException("Cannot read local file: '" + localFile + "'");
         }
     }
 
@@ -946,13 +933,22 @@ public final class SftpClient {
             if (!localFolder.isDirectory()) {
                 if (createDirs) {
                     if (!localFolder.mkdirs()) {
-                        throw new SftpClientException("Create dirs failed: " + localFolder);
+                        throw new SftpClientException("Create dirs failed: '" + localFolder + "'");
                     }
                 }
             }
         }
         if (strictMode && !createDirs) {
-            throw new FileNotFoundException("Cannot found local folder: " + localFolder);
+            throw new FileNotFoundException("Cannot found local folder: '" + localFolder + "'");
+        }
+    }
+
+    /**
+     * In strict mode, check for remote folder.
+     */
+    protected void assertRemoteFolderExists(String remoteFolderName) throws SftpClientException, FileNotFoundException {
+        if (strictMode) {
+            assertRemoteFolderExists(remoteFolderName, false);
         }
     }
 
@@ -986,6 +982,21 @@ public final class SftpClient {
          * Enables overwriting of files without any warning..
          */
         ALWAYS
+    }
+
+    // ===================================================================================
+    // ============================== ASSERTS ============================================
+    // ===================================================================================
+
+    /**
+     * In strict mode, check for local files.
+     */
+    protected void assertLocalFilesExists(File... localFiles) throws FileNotFoundException {
+        if (strictMode) {
+            for (File localFile : localFiles) {
+                assertLocalFileExists(localFile);
+            }
+        }
     }
 
     /**
