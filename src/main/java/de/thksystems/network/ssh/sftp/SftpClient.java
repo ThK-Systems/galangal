@@ -522,7 +522,6 @@ public final class SftpClient {
         try {
             return getConnection().stat(remoteFileName) != null;
         } catch (SftpException e) {
-            LOG.error("Error while stat of remote file: {}", e.getMessage(), e);
             return false;
         }
     }

@@ -5,7 +5,7 @@
     <groupId>net.thk-systems.network</groupId>
     <artifactId>galangal</artifactId>
     <packaging>jar</packaging>
-    <version>1.1.1</version>
+    <version>1.1.2-SNAPSHOT</version>
     <name>galangal</name>
 
     <parent>
