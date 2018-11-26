@@ -14,13 +14,17 @@ Browse the [Javadoc of the latest version](http://www.thk-systems.de/content/oss
 <dependency>
   <groupId>net.thk-systems.network</groupId>
   <artifactId>galangal</artifactId>
-  <version>1.1.2</version>
+  <version>1.2.0</version>
 </dependency>
 ```
-You can browse [maven-central](http://search.maven.org/#artifactdetails|net.thk-systems.network|galangal|1.1.2|jar) to download the jar or another versions.
+You can browse [maven-central](http://search.maven.org/#artifactdetails|net.thk-systems.network|galangal|1.2.0|jar) to download the jar or another versions.
 
 
 ## Changelog
+
+**1.2.0**
+
+* Updated parent pom
 
 **1.1.2**
 
