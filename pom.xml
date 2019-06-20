@@ -5,13 +5,13 @@
     <groupId>net.thk-systems.network</groupId>
     <artifactId>galangal</artifactId>
     <packaging>jar</packaging>
-    <version>1.2.0</version>
+    <version>1.3.0</version>
     <name>galangal</name>
 
     <parent>
         <groupId>net.thk-systems</groupId>
         <artifactId>tksparent</artifactId>
-        <version>1.19.0</version>
+        <version>1.20.0</version>
     </parent>
 
     <url>https://github.com/ThK-Systems/galangal</url>
