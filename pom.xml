@@ -11,7 +11,7 @@
     <parent>
         <groupId>net.thk-systems</groupId>
         <artifactId>tksparent</artifactId>
-        <version>1.24.0</version>
+        <version>1.25.0</version>
     </parent>
 
     <url>https://github.com/ThK-Systems/galangal</url>
