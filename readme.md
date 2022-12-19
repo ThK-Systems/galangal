@@ -22,6 +22,10 @@ You can browse [maven-central](http://search.maven.org/#artifactdetails|net.thk-
 
 ## Changelog
 
+**1.4.4**
+
+* Updated parent pom and maven dependencies, because of CVE-2021-37533
+
 **1.4.3**
 
 * Updated parent pom and maven dependencies
